@@ -6,51 +6,47 @@ function cleanCNPJ(cnpj = "") {
   return cnpj.replace(/\D/g, "");
 }
 
-function statusColor(status = "") {
-  const s = status.toLowerCase();
-  if (s.includes("entregue") || s.includes("delivered")) return "#00c48c";
-  if (s.includes("trânsito") || s.includes("transito") || s.includes("saiu")) return "#f5a623";
+// Parseia o formato REAL da API Rodonaves
+function parseResponse(data) {
+  const item = Array.isArray(data) ? data[0] : data;
+  if (!item) return { lastEvent: "Sem dados", lastDate: "—", delivered: false, allEvents: [] };
+
+  const events = item.Events || [];
+  const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+
+  const description = lastEvent?.Description || "Sem eventos";
+  const date = lastEvent?.Date
+    ? new Date(lastEvent.Date).toLocaleString("pt-BR")
+    : "—";
+
+  const delivered =
+    description.toLowerCase().includes("entregue") ||
+    description.toLowerCase().includes("delivered");
+
+  return {
+    lastEvent: description,
+    lastDate: date,
+    delivered,
+    allEvents: events,
+    sender: item.SenderDescription || "—",
+    recipient: item.RecipientDescription || "—",
+    protocol: item.ProtocolNumber || "—",
+    cte: item.CTeNumber || "—",
+    expectedDays: item.ExpectedDeliveryDays ?? "—",
+    emissionDate: item.EmissionDate
+      ? new Date(item.EmissionDate).toLocaleDateString("pt-BR")
+      : "—",
+  };
+}
+
+function statusColor(event = "", delivered = false) {
+  if (delivered) return "#00c48c";
+  const s = event.toLowerCase();
+  if (s.includes("entregue")) return "#00c48c";
+  if (s.includes("trânsito") || s.includes("transito") || s.includes("saiu") || s.includes("transferência")) return "#f5a623";
   if (s.includes("coletado") || s.includes("colet")) return "#4a90e2";
-  if (s.includes("erro") || s.includes("não encontrado") || s.includes("error")) return "#e74c3c";
+  if (s.includes("erro") || s.includes("não encontrado") || s.includes("devolvido")) return "#e74c3c";
   return "#9b9b9b";
-}
-
-function parseLastEvent(data) {
-  try {
-    if (!data) return "—";
-    if (Array.isArray(data)) {
-      const last = data[data.length - 1];
-      return last?.descricao || last?.description || last?.status || JSON.stringify(last).slice(0, 100);
-    }
-    if (data.ocorrencias || data.occurrences) {
-      const list = data.ocorrencias || data.occurrences;
-      const last = Array.isArray(list) ? list[list.length - 1] : list;
-      return last?.descricao || last?.description || last?.status || JSON.stringify(last).slice(0, 100);
-    }
-    if (data.status) return data.status;
-    if (data.descricao) return data.descricao;
-    if (data.raw) return data.raw.slice(0, 120);
-    return JSON.stringify(data).slice(0, 120);
-  } catch {
-    return "—";
-  }
-}
-
-function parseDate(data) {
-  try {
-    if (!data) return "—";
-    let list = [];
-    if (Array.isArray(data)) list = data;
-    else if (data.ocorrencias) list = data.ocorrencias;
-    else if (data.occurrences) list = data.occurrences;
-    if (!list.length) return "—";
-    const last = list[list.length - 1];
-    const raw = last?.dataOcorrencia || last?.date || last?.data || last?.dateTime;
-    if (!raw) return "—";
-    return new Date(raw).toLocaleString("pt-BR");
-  } catch {
-    return "—";
-  }
 }
 
 async function fetchTracking(cnpj, nf, token) {
@@ -78,7 +74,7 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [token, setToken] = useState("");
   const [dragOver, setDragOver] = useState(false);
-  const [rawResponse, setRawResponse] = useState(null);
+  const [expanded, setExpanded] = useState(null);
   const fileRef = useRef();
   const abortRef = useRef(false);
 
@@ -95,8 +91,7 @@ export default function Home() {
           const nfKey = keys.find((k) =>
             k.toLowerCase().includes("nf") ||
             k.toLowerCase().includes("nota") ||
-            k.toLowerCase().includes("invoice") ||
-            k.toLowerCase().includes("number")
+            k.toLowerCase().includes("invoice")
           );
           return {
             id: i,
@@ -130,11 +125,15 @@ export default function Home() {
       setProgress(Math.round(((i + 1) / rows.length) * 100));
 
       const result = await fetchTracking(row.cnpj, row.nf, token);
+      const parsed = result.ok ? parseResponse(result.data) : null;
+
       out.push({
         ...row,
         ok: result.ok,
-        lastEvent: result.ok ? parseLastEvent(result.data) : result.error,
-        lastDate: result.ok ? parseDate(result.data) : "—",
+        lastEvent: result.ok ? parsed.lastEvent : result.error,
+        lastDate: result.ok ? parsed.lastDate : "—",
+        delivered: result.ok ? parsed.delivered : false,
+        parsed,
         rawData: result.data,
         httpStatus: result.status,
       });
@@ -145,13 +144,17 @@ export default function Home() {
   }, [rows, token]);
 
   const exportCSV = () => {
-    const header = ["CNPJ", "NF", "Último Status", "Data/Hora", "OK"];
+    const header = ["CNPJ", "NF", "Último Status", "Data/Hora", "Remetente", "Destinatário", "Prazo (dias)", "Emissão", "Entregue"];
     const lines = results.map((r) => [
       r.cnpj,
       r.nf,
       `"${(r.lastEvent || "").replace(/"/g, "'")}"`,
       r.lastDate,
-      r.ok ? "SIM" : "NÃO",
+      `"${(r.parsed?.sender || "").replace(/"/g, "'")}"`,
+      `"${(r.parsed?.recipient || "").replace(/"/g, "'")}"`,
+      r.parsed?.expectedDays ?? "—",
+      r.parsed?.emissionDate ?? "—",
+      r.delivered ? "SIM" : "NÃO",
     ]);
     const csv = [header, ...lines].map((l) => l.join(";")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -172,36 +175,35 @@ export default function Home() {
     a.click();
   };
 
+  const delivered = results.filter((r) => r.delivered).length;
+  const errors = results.filter((r) => !r.ok).length;
+  const inTransit = results.filter((r) => r.ok && !r.delivered).length;
+
   const s = {
     page: { minHeight: "100vh", background: "#0a0f1e", fontFamily: "'DM Mono', monospace", color: "#e8e8f0" },
     header: {
       background: "linear-gradient(135deg, #0d1b2a 0%, #12213b 50%, #0a1628 100%)",
-      borderBottom: "1px solid #1e3a5f",
-      padding: "24px 32px",
+      borderBottom: "1px solid #1e3a5f", padding: "24px 32px",
       display: "flex", alignItems: "center", gap: 16,
     },
-    icon: {
-      width: 44, height: 44, borderRadius: 10,
-      background: "linear-gradient(135deg, #f5a623, #e8541a)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      fontSize: 22, boxShadow: "0 0 20px rgba(245,166,35,0.35)",
-    },
-    card: {
-      background: "#0d1b2a", border: "1px solid #1e3a5f",
-      borderRadius: 10, padding: "16px 20px", marginBottom: 20,
-    },
+    card: { background: "#0d1b2a", border: "1px solid #1e3a5f", borderRadius: 10, padding: "16px 20px", marginBottom: 20 },
     label: { fontSize: 11, color: "#f5a623", letterSpacing: "0.12em", marginBottom: 8 },
     input: {
       width: "100%", background: "#060d1a", border: "1px solid #1e3a5f",
       borderRadius: 6, color: "#e8e8f0", fontSize: 13, padding: "8px 12px",
       outline: "none", boxSizing: "border-box", fontFamily: "inherit",
     },
+    th: {
+      textAlign: "left", padding: "10px 14px", color: "#6b8cad",
+      fontWeight: 600, fontSize: 11, letterSpacing: "0.08em",
+      whiteSpace: "nowrap", borderBottom: "1px solid #1e3a5f",
+    },
+    td: { padding: "9px 14px" },
     btnPrimary: {
-      background: "linear-gradient(135deg, #f5a623, #e8541a)",
-      border: "none", borderRadius: 8, color: "#fff",
-      fontSize: 14, fontWeight: 700, padding: "12px 28px",
-      cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.05em",
-      boxShadow: "0 0 20px rgba(245,166,35,0.3)",
+      background: "linear-gradient(135deg, #f5a623, #e8541a)", border: "none",
+      borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 700,
+      padding: "12px 28px", cursor: "pointer", fontFamily: "inherit",
+      letterSpacing: "0.05em", boxShadow: "0 0 20px rgba(245,166,35,0.3)",
     },
     btnDisabled: {
       background: "#1e3a5f", border: "none", borderRadius: 8, color: "#4a6a8a",
@@ -213,13 +215,6 @@ export default function Home() {
       borderRadius: 8, color, fontSize: 14, padding: "12px 20px",
       cursor: "pointer", fontFamily: "inherit",
     }),
-    th: {
-      textAlign: "left", padding: "10px 14px",
-      color: "#6b8cad", fontWeight: 600, fontSize: 11,
-      letterSpacing: "0.08em", whiteSpace: "nowrap",
-      borderBottom: "1px solid #1e3a5f",
-    },
-    td: { padding: "9px 14px" },
   };
 
   return (
@@ -231,32 +226,34 @@ export default function Home() {
       </Head>
 
       <div style={s.page}>
-        {/* Header */}
         <div style={s.header}>
-          <div style={s.icon}>🚛</div>
+          <div style={{
+            width: 44, height: 44, borderRadius: 10,
+            background: "linear-gradient(135deg, #f5a623, #e8541a)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 22, boxShadow: "0 0 20px rgba(245,166,35,0.35)",
+          }}>🚛</div>
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "0.05em", color: "#fff" }}>
               RODONAVES <span style={{ color: "#f5a623" }}>RASTREIO</span> BOT
             </div>
-            <div style={{ fontSize: 11, color: "#6b8cad", letterSpacing: "0.12em" }}>
-              IMPORTAÇÃO EM LOTE VIA CSV
-            </div>
+            <div style={{ fontSize: 11, color: "#6b8cad", letterSpacing: "0.12em" }}>IMPORTAÇÃO EM LOTE VIA CSV</div>
           </div>
         </div>
 
-        <div style={{ maxWidth: 960, margin: "0 auto", padding: "32px 24px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px" }}>
 
           {/* Token */}
           <div style={s.card}>
-            <div style={s.label}>TOKEN DE AUTENTICAÇÃO (opcional)</div>
+            <div style={s.label}>TOKEN DE AUTENTICAÇÃO</div>
             <input
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder="Bearer eyJ... (solicite em dev.rodonaves.com.br)"
+              placeholder="Bearer eyJ... (solicite à Rodonaves pelo SAC: 0800 722 6060)"
               style={s.input}
             />
             <div style={{ fontSize: 11, color: "#4a6a8a", marginTop: 6 }}>
-              Sem token o bot tenta a API pública. Se retornar 401/403, é necessário credencial.
+              Solicite as credenciais da API pelo SAC ou portal do cliente da Rodonaves.
             </div>
           </div>
 
@@ -268,29 +265,26 @@ export default function Home() {
             onClick={() => fileRef.current.click()}
             style={{
               border: `2px dashed ${dragOver ? "#f5a623" : "#1e3a5f"}`,
-              borderRadius: 12, padding: "40px 24px", textAlign: "center",
+              borderRadius: 12, padding: "36px 24px", textAlign: "center",
               cursor: "pointer", marginBottom: 20, transition: "all 0.2s",
               background: dragOver ? "rgba(245,166,35,0.05)" : "#060d1a",
             }}
           >
             <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }}
               onChange={(e) => handleFile(e.target.files[0])} />
-            <div style={{ fontSize: 36, marginBottom: 8 }}>📂</div>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
             <div style={{ fontSize: 14, color: "#8aa8c8" }}>
               Arraste o CSV ou <span style={{ color: "#f5a623" }}>clique para selecionar</span>
             </div>
             <div style={{ fontSize: 12, color: "#4a6a8a", marginTop: 6 }}>
-              Colunas: <code style={{ color: "#f5a623" }}>CNPJ</code> e <code style={{ color: "#f5a623" }}>NF</code> — separadas por ; ou ,
+              Colunas: <code style={{ color: "#f5a623" }}>CNPJ</code> e <code style={{ color: "#f5a623" }}>NF</code>
             </div>
           </div>
 
-          {/* Actions row */}
-          <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
-            <button onClick={downloadSample} style={s.btnOutline("#6b8cad")}>
-              ⬇ CSV Modelo
-            </button>
+          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+            <button onClick={downloadSample} style={s.btnOutline("#6b8cad")}>⬇ CSV Modelo</button>
             {rows.length > 0 && (
-              <div style={{ fontSize: 12, color: "#8aa8c8", padding: "7px 0" }}>
+              <div style={{ fontSize: 12, color: "#8aa8c8" }}>
                 <span style={{ color: "#00c48c" }}>✓</span> {rows.length} registro(s) — {results.length} processado(s)
               </div>
             )}
@@ -302,11 +296,7 @@ export default function Home() {
               <div style={s.label}>PREVIEW DO CSV</div>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
-                  <tr>
-                    {["#", "CNPJ", "NF"].map((h) => (
-                      <th key={h} style={s.th}>{h}</th>
-                    ))}
-                  </tr>
+                  <tr>{["#", "CNPJ", "NF"].map((h) => <th key={h} style={s.th}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {rows.slice(0, 5).map((r) => (
@@ -326,30 +316,22 @@ export default function Home() {
             </div>
           )}
 
-          {/* Run controls */}
+          {/* Controles */}
           <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-            <button
-              onClick={runRobot}
-              disabled={running || rows.length === 0}
-              style={running || rows.length === 0 ? s.btnDisabled : s.btnPrimary}
-            >
+            <button onClick={runRobot} disabled={running || rows.length === 0}
+              style={running || rows.length === 0 ? s.btnDisabled : s.btnPrimary}>
               {running ? `⏳ PROCESSANDO... ${progress}%` : "▶ INICIAR RASTREIO"}
             </button>
             {running && (
-              <button onClick={() => { abortRef.current = true; }} style={s.btnOutline("#e74c3c")}>
-                ⏹ PARAR
-              </button>
+              <button onClick={() => { abortRef.current = true; }} style={s.btnOutline("#e74c3c")}>⏹ PARAR</button>
             )}
             {results.length > 0 && !running && (
-              <button onClick={exportCSV} style={s.btnOutline("#00c48c")}>
-                ⬇ EXPORTAR CSV
-              </button>
+              <button onClick={exportCSV} style={s.btnOutline("#00c48c")}>⬇ EXPORTAR CSV</button>
             )}
           </div>
 
-          {/* Progress bar */}
           {running && (
-            <div style={{ background: "#1e3a5f", borderRadius: 4, height: 6, marginBottom: 24, overflow: "hidden" }}>
+            <div style={{ background: "#1e3a5f", borderRadius: 4, height: 6, marginBottom: 20, overflow: "hidden" }}>
               <div style={{
                 height: "100%", width: `${progress}%`,
                 background: "linear-gradient(90deg, #f5a623, #e8541a)",
@@ -358,7 +340,27 @@ export default function Home() {
             </div>
           )}
 
-          {/* Results */}
+          {/* Resumo */}
+          {results.length > 0 && (
+            <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+              {[
+                { label: "ENTREGUES", value: delivered, color: "#00c48c" },
+                { label: "EM TRÂNSITO", value: inTransit, color: "#f5a623" },
+                { label: "ERROS / SEM TOKEN", value: errors, color: "#e74c3c" },
+              ].map((c) => (
+                <div key={c.label} style={{
+                  flex: 1, minWidth: 120,
+                  background: `${c.color}11`, border: `1px solid ${c.color}44`,
+                  borderRadius: 10, padding: "14px 18px", textAlign: "center",
+                }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: c.color }}>{c.value}</div>
+                  <div style={{ fontSize: 10, color: c.color, letterSpacing: "0.1em", marginTop: 2 }}>{c.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Tabela */}
           {results.length > 0 && (
             <div style={{ background: "#0d1b2a", border: "1px solid #1e3a5f", borderRadius: 12, overflow: "hidden" }}>
               <div style={{
@@ -366,60 +368,114 @@ export default function Home() {
                 display: "flex", justifyContent: "space-between", alignItems: "center",
               }}>
                 <div style={s.label}>RESULTADOS</div>
-                <div style={{ fontSize: 12, color: "#6b8cad" }}>
-                  ✓ {results.filter(r => r.ok).length} &nbsp; ✗ {results.filter(r => !r.ok).length}
-                </div>
+                <div style={{ fontSize: 12, color: "#6b8cad" }}>{results.length} de {rows.length} processados</div>
               </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: "#060d1a" }}>
-                      {["#", "CNPJ", "NF", "ÚLTIMO STATUS", "DATA/HORA", ""].map((h) => (
+                      {["#", "CNPJ", "NF", "ÚLTIMO STATUS", "DATA/HORA", "DESTINATÁRIO", "✓", ""].map((h) => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {results.map((r, i) => (
-                      <tr key={r.id} style={{
-                        borderBottom: "1px solid #111e30",
-                        background: i % 2 === 0 ? "transparent" : "#060d1a",
-                      }}>
-                        <td style={{ ...s.td, color: "#4a6a8a" }}>{r.id + 1}</td>
-                        <td style={{ ...s.td, color: "#8aa8c8", fontFamily: "monospace" }}>{r.cnpj}</td>
-                        <td style={{ ...s.td, color: "#8aa8c8", fontFamily: "monospace" }}>{r.nf}</td>
-                        <td style={{ ...s.td, maxWidth: 300 }}>
-                          <span style={{
-                            display: "inline-block",
-                            background: statusColor(r.lastEvent) + "22",
-                            color: statusColor(r.lastEvent),
-                            border: `1px solid ${statusColor(r.lastEvent)}44`,
-                            borderRadius: 4, padding: "2px 8px", fontSize: 11,
-                            maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                          }}>
-                            {r.lastEvent || "—"}
-                          </span>
-                        </td>
-                        <td style={{ ...s.td, color: "#6b8cad", whiteSpace: "nowrap" }}>{r.lastDate}</td>
-                        <td style={s.td}>
-                          {r.ok && r.rawData ? (
-                            <button
-                              onClick={() => setRawResponse(rawResponse?.id === r.id ? null : { id: r.id, data: r.rawData })}
-                              style={{
-                                background: "transparent", border: "1px solid #1e3a5f",
-                                borderRadius: 4, color: "#8aa8c8", fontSize: 10,
-                                padding: "3px 8px", cursor: "pointer", fontFamily: "inherit",
-                              }}
-                            >
-                              {rawResponse?.id === r.id ? "▲ fechar" : "▼ detalhes"}
-                            </button>
-                          ) : (
-                            <span style={{ color: "#e74c3c", fontSize: 11 }}>
-                              {r.httpStatus ? `HTTP ${r.httpStatus}` : "✗ erro"}
+                      <>
+                        <tr key={`row-${r.id}`} style={{
+                          borderBottom: expanded === r.id ? "none" : "1px solid #111e30",
+                          background: i % 2 === 0 ? "transparent" : "#060d1a",
+                        }}>
+                          <td style={{ ...s.td, color: "#4a6a8a" }}>{r.id + 1}</td>
+                          <td style={{ ...s.td, color: "#8aa8c8", fontFamily: "monospace" }}>{r.cnpj}</td>
+                          <td style={{ ...s.td, color: "#8aa8c8", fontFamily: "monospace" }}>{r.nf}</td>
+                          <td style={{ ...s.td, maxWidth: 260 }}>
+                            <span style={{
+                              display: "inline-block",
+                              background: statusColor(r.lastEvent, r.delivered) + "22",
+                              color: statusColor(r.lastEvent, r.delivered),
+                              border: `1px solid ${statusColor(r.lastEvent, r.delivered)}44`,
+                              borderRadius: 4, padding: "2px 8px", fontSize: 11,
+                              maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>
+                              {r.lastEvent || "—"}
                             </span>
-                          )}
-                        </td>
-                      </tr>
+                          </td>
+                          <td style={{ ...s.td, color: "#6b8cad", whiteSpace: "nowrap" }}>{r.lastDate}</td>
+                          <td style={{ ...s.td, color: "#8aa8c8", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {r.parsed?.recipient || "—"}
+                          </td>
+                          <td style={s.td}>
+                            {r.ok
+                              ? <span style={{ color: r.delivered ? "#00c48c" : "#f5a623", fontSize: 16 }}>
+                                  {r.delivered ? "✓" : "○"}
+                                </span>
+                              : <span style={{ color: "#e74c3c", fontSize: 11 }}>
+                                  {r.httpStatus ? `HTTP ${r.httpStatus}` : "✗"}
+                                </span>
+                            }
+                          </td>
+                          <td style={s.td}>
+                            {r.ok && r.parsed?.allEvents?.length > 0 && (
+                              <button
+                                onClick={() => setExpanded(expanded === r.id ? null : r.id)}
+                                style={{
+                                  background: "transparent", border: "1px solid #1e3a5f",
+                                  borderRadius: 4, color: "#8aa8c8", fontSize: 10,
+                                  padding: "3px 8px", cursor: "pointer", fontFamily: "inherit",
+                                }}
+                              >
+                                {expanded === r.id ? "▲ fechar" : "▼ eventos"}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+
+                        {/* Detalhes expandidos */}
+                        {expanded === r.id && r.parsed?.allEvents && (
+                          <tr key={`detail-${r.id}`} style={{ borderBottom: "1px solid #111e30" }}>
+                            <td colSpan={8} style={{ padding: "0 14px 16px 14px", background: "#060d1a" }}>
+                              <div style={{ padding: "12px 0 8px", fontSize: 11, color: "#f5a623", letterSpacing: "0.1em" }}>
+                                HISTÓRICO COMPLETO — NF {r.nf}
+                              </div>
+                              {/* Info */}
+                              <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 14 }}>
+                                {[
+                                  ["Remetente", r.parsed.sender],
+                                  ["Destinatário", r.parsed.recipient],
+                                  ["Protocolo", r.parsed.protocol],
+                                  ["CT-e", r.parsed.cte],
+                                  ["Emissão", r.parsed.emissionDate],
+                                  ["Prazo", r.parsed.expectedDays !== "—" ? `${r.parsed.expectedDays} dias` : "—"],
+                                ].map(([label, val]) => (
+                                  <div key={label}>
+                                    <div style={{ fontSize: 10, color: "#4a6a8a", marginBottom: 2 }}>{label}</div>
+                                    <div style={{ fontSize: 12, color: "#8aa8c8" }}>{val}</div>
+                                  </div>
+                                ))}
+                              </div>
+                              {/* Timeline */}
+                              <div style={{ borderLeft: "2px solid #1e3a5f", paddingLeft: 16 }}>
+                                {r.parsed.allEvents.map((ev, ei) => (
+                                  <div key={ei} style={{ marginBottom: 10, position: "relative" }}>
+                                    <div style={{
+                                      position: "absolute", left: -21, top: 4,
+                                      width: 8, height: 8, borderRadius: "50%",
+                                      background: ei === r.parsed.allEvents.length - 1 ? "#f5a623" : "#1e3a5f",
+                                      border: "2px solid #060d1a",
+                                    }} />
+                                    <div style={{ fontSize: 10, color: "#4a6a8a" }}>
+                                      {ev.Date ? new Date(ev.Date).toLocaleString("pt-BR") : "—"}
+                                      {ev.EventCode && <span style={{ marginLeft: 8, color: "#2a4a6a" }}>#{ev.EventCode}</span>}
+                                    </div>
+                                    <div style={{ fontSize: 12, color: "#e8e8f0", marginTop: 2 }}>{ev.Description}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
                     ))}
                   </tbody>
                 </table>
@@ -427,22 +483,8 @@ export default function Home() {
             </div>
           )}
 
-          {/* JSON drawer */}
-          {rawResponse && (
-            <div style={{ marginTop: 12, background: "#060d1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
-              <div style={{ ...s.label, marginBottom: 10 }}>RESPOSTA COMPLETA — REGISTRO #{rawResponse.id + 1}</div>
-              <pre style={{
-                margin: 0, fontSize: 11, color: "#8aa8c8",
-                whiteSpace: "pre-wrap", wordBreak: "break-all",
-                maxHeight: 300, overflow: "auto",
-              }}>
-                {JSON.stringify(rawResponse.data, null, 2)}
-              </pre>
-            </div>
-          )}
-
           <div style={{ marginTop: 32, fontSize: 11, color: "#2a4a6a", textAlign: "center" }}>
-            Proxy: /api/tracking → tracking-apigateway.rte.com.br &nbsp;·&nbsp; dev.rodonaves.com.br
+            API: tracking-apigateway.rte.com.br · SAC Rodonaves: 0800 722 6060
           </div>
         </div>
       </div>
