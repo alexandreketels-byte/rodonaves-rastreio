@@ -6,86 +6,6 @@ function cleanCNPJ(cnpj = "") {
   return cnpj.replace(/\D/g, "");
 }
 
-// Feriados nacionais fixos (MM-DD)
-const FERIADOS_FIXOS = [
-  "01-01", // Ano Novo
-  "04-21", // Tiradentes
-  "05-01", // Dia do Trabalho
-  "09-07", // Independência
-  "10-12", // Nossa Senhora Aparecida
-  "11-02", // Finados
-  "11-15", // Proclamação da República
-  "11-20", // Consciência Negra
-  "12-25", // Natal
-];
-
-// Páscoa pelo algoritmo de Meeus/Jones/Butcher
-function calcPascoa(ano) {
-  const a = ano % 19;
-  const b = Math.floor(ano / 100);
-  const c = ano % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const mes = Math.floor((h + l - 7 * m + 114) / 31);
-  const dia = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(ano, mes - 1, dia);
-}
-
-// Retorna lista de feriados do ano como strings YYYY-MM-DD
-function feriadosDoAno(ano) {
-  const lista = FERIADOS_FIXOS.map((f) => `${ano}-${f}`);
-
-  const pascoa = calcPascoa(ano);
-  const addDias = (d, n) => {
-    const r = new Date(d);
-    r.setDate(r.getDate() + n);
-    return r;
-  };
-  const fmt = (d) => d.toISOString().slice(0, 10);
-
-  lista.push(fmt(addDias(pascoa, -48))); // Carnaval segunda
-  lista.push(fmt(addDias(pascoa, -47))); // Carnaval terça
-  lista.push(fmt(addDias(pascoa, -2)));  // Sexta-feira Santa
-  lista.push(fmt(pascoa));               // Páscoa
-  lista.push(fmt(addDias(pascoa, 60)));  // Corpus Christi
-
-  return lista;
-}
-
-function isFeriado(date) {
-  const ano = date.getFullYear();
-  const feriados = feriadosDoAno(ano);
-  const str = date.toISOString().slice(0, 10);
-  return feriados.includes(str);
-}
-
-function isUtil(date) {
-  const dow = date.getDay();
-  if (dow === 0 || dow === 6) return false; // domingo ou sábado
-  if (isFeriado(date)) return false;
-  return true;
-}
-
-// Soma N dias úteis a partir de uma data
-function addDiasUteis(dataInicio, dias) {
-  if (!dataInicio || !dias || dias === "—") return null;
-  let d = new Date(dataInicio);
-  d.setHours(0, 0, 0, 0);
-  let count = 0;
-  while (count < dias) {
-    d.setDate(d.getDate() + 1);
-    if (isUtil(d)) count++;
-  }
-  return d;
-}
-
 // Parseia o formato REAL da API Rodonaves
 function parseResponse(data) {
   const item = Array.isArray(data) ? data[0] : data;
@@ -103,43 +23,18 @@ function parseResponse(data) {
     description.toLowerCase().includes("entregue") ||
     description.toLowerCase().includes("delivered");
 
-  // Data real de entrega — busca nos eventos
-  const eventoEntrega = events.find((ev) =>
-    (ev.Description || "").toLowerCase().includes("entregue") ||
-    (ev.Description || "").toLowerCase().includes("delivered")
-  );
-  const dataEntregaReal = eventoEntrega?.Date
-    ? new Date(eventoEntrega.Date).toLocaleString("pt-BR")
-    : null;
-
-  // Previsão de entrega = EmissionDate + ExpectedDeliveryDays (dias úteis)
-  const emissionRaw = item.EmissionDate ? new Date(item.EmissionDate) : null;
-  const expectedDays = item.ExpectedDeliveryDays;
-  const previsaoDate = addDiasUteis(emissionRaw, expectedDays);
-  const previsaoFormatada = previsaoDate
-    ? previsaoDate.toLocaleDateString("pt-BR")
-    : "—";
-
-  // Verificar atraso
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  const atrasado = !delivered && previsaoDate && previsaoDate < hoje;
-
   return {
     lastEvent: description,
     lastDate: date,
     delivered,
-    atrasado,
-    dataEntregaReal,
-    previsaoEntrega: previsaoFormatada,
     allEvents: events,
     sender: item.SenderDescription || "—",
     recipient: item.RecipientDescription || "—",
     protocol: item.ProtocolNumber || "—",
     cte: item.CTeNumber || "—",
-    expectedDays: expectedDays ?? "—",
-    emissionDate: emissionRaw
-      ? emissionRaw.toLocaleDateString("pt-BR")
+    expectedDays: item.ExpectedDeliveryDays ?? "—",
+    emissionDate: item.EmissionDate
+      ? new Date(item.EmissionDate).toLocaleDateString("pt-BR")
       : "—",
   };
 }
@@ -238,9 +133,6 @@ export default function Home() {
         lastEvent: result.ok ? parsed.lastEvent : result.error,
         lastDate: result.ok ? parsed.lastDate : "—",
         delivered: result.ok ? parsed.delivered : false,
-        atrasado: result.ok ? parsed.atrasado : false,
-        previsaoEntrega: result.ok ? parsed.previsaoEntrega : "—",
-        dataEntregaReal: result.ok ? parsed.dataEntregaReal : null,
         parsed,
         rawData: result.data,
         httpStatus: result.status,
@@ -252,20 +144,17 @@ export default function Home() {
   }, [rows, token]);
 
   const exportCSV = () => {
-    const header = ["CNPJ", "NF", "Último Status", "Últ. Atualização", "Previsão Entrega", "Data Entrega Real", "Remetente", "Destinatário", "Prazo (dias úteis)", "Emissão", "Entregue", "Atrasado"];
+    const header = ["CNPJ", "NF", "Último Status", "Data/Hora", "Remetente", "Destinatário", "Prazo (dias)", "Emissão", "Entregue"];
     const lines = results.map((r) => [
       r.cnpj,
       r.nf,
       `"${(r.lastEvent || "").replace(/"/g, "'")}"`,
       r.lastDate,
-      r.previsaoEntrega || "—",
-      r.dataEntregaReal || "—",
       `"${(r.parsed?.sender || "").replace(/"/g, "'")}"`,
       `"${(r.parsed?.recipient || "").replace(/"/g, "'")}"`,
       r.parsed?.expectedDays ?? "—",
       r.parsed?.emissionDate ?? "—",
       r.delivered ? "SIM" : "NÃO",
-      r.atrasado ? "SIM" : "NÃO",
     ]);
     const csv = [header, ...lines].map((l) => l.join(";")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -513,15 +402,6 @@ export default function Home() {
                             </span>
                           </td>
                           <td style={{ ...s.td, color: "#6b8cad", whiteSpace: "nowrap" }}>{r.lastDate}</td>
-                          <td style={{ ...s.td, whiteSpace: "nowrap" }}>
-                            <span style={{ color: r.atrasado ? "#e74c3c" : "#6b8cad" }}>
-                              {r.previsaoEntrega || "—"}
-                              {r.atrasado && <span style={{ marginLeft: 4, fontSize: 10, color: "#e74c3c" }}>⚠ ATRASADO</span>}
-                            </span>
-                          </td>
-                          <td style={{ ...s.td, color: "#00c48c", whiteSpace: "nowrap" }}>
-                            {r.dataEntregaReal || "—"}
-                          </td>
                           <td style={{ ...s.td, color: "#8aa8c8", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {r.parsed?.recipient || "—"}
                           </td>
@@ -554,7 +434,7 @@ export default function Home() {
                         {/* Detalhes expandidos */}
                         {expanded === r.id && r.parsed?.allEvents && (
                           <tr key={`detail-${r.id}`} style={{ borderBottom: "1px solid #111e30" }}>
-                            <td colSpan={10} style={{ padding: "0 14px 16px 14px", background: "#060d1a" }}>
+                            <td colSpan={8} style={{ padding: "0 14px 16px 14px", background: "#060d1a" }}>
                               <div style={{ padding: "12px 0 8px", fontSize: 11, color: "#f5a623", letterSpacing: "0.1em" }}>
                                 HISTÓRICO COMPLETO — NF {r.nf}
                               </div>
@@ -566,9 +446,7 @@ export default function Home() {
                                   ["Protocolo", r.parsed.protocol],
                                   ["CT-e", r.parsed.cte],
                                   ["Emissão", r.parsed.emissionDate],
-                                  ["Prazo (dias úteis)", r.parsed.expectedDays !== "—" ? `${r.parsed.expectedDays} dias úteis` : "—"],
-                                  ["Previsão Entrega", r.parsed.previsaoEntrega || "—"],
-                                  ["Entregue em", r.parsed.dataEntregaReal || "—"],
+                                  ["Prazo", r.parsed.expectedDays !== "—" ? `${r.parsed.expectedDays} dias` : "—"],
                                 ].map(([label, val]) => (
                                   <div key={label}>
                                     <div style={{ fontSize: 10, color: "#4a6a8a", marginBottom: 2 }}>{label}</div>
