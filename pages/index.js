@@ -177,11 +177,48 @@ export default function Home() {
   const [results, setResults] = useState([]);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
+  const [tokenExpiry, setTokenExpiry] = useState(null);
+  const [tokenStatus, setTokenStatus] = useState(""); // "ok" | "error" | "loading"
   const [dragOver, setDragOver] = useState(false);
   const [expanded, setExpanded] = useState(null);
+  const [inputMode, setInputMode] = useState("csv"); // "csv" | "texto"
+  const [pasteText, setPasteText] = useState("");
   const fileRef = useRef();
   const abortRef = useRef(false);
+
+  const gerarToken = async () => {
+    if (!username || !password) return null;
+    setTokenStatus("loading");
+    try {
+      const res = await fetch("/api/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setTokenStatus("error");
+        return null;
+      }
+      const novoToken = data.access_token || data.token || data.accessToken;
+      const expiry = Date.now() + (data.expires_in ? data.expires_in * 1000 : 3600000);
+      setToken(novoToken);
+      setTokenExpiry(expiry);
+      setTokenStatus("ok");
+      return novoToken;
+    } catch {
+      setTokenStatus("error");
+      return null;
+    }
+  };
+
+  const getTokenValido = async () => {
+    if (token && tokenExpiry && Date.now() < tokenExpiry - 60000) return token;
+    return await gerarToken();
+  };
 
   const handleFile = (file) => {
     if (!file) return;
@@ -217,6 +254,28 @@ export default function Home() {
     handleFile(e.dataTransfer.files[0]);
   };
 
+  const parsePasteText = () => {
+    const linhas = pasteText.trim().split(/
+/);
+    const mapped = [];
+    let id = 0;
+    for (const linha of linhas) {
+      const partes = linha.trim().split(/[;,	]+/);
+      if (partes.length < 2) continue;
+      const cnpj = partes[0].trim();
+      const nf = partes[1].trim();
+      if (!cnpj || !nf) continue;
+      mapped.push({ id: id++, cnpj, nf });
+    }
+    if (mapped.length === 0) {
+      alert("Nenhum dado válido encontrado. Use o formato: CNPJ;NF (um por linha)");
+      return;
+    }
+    setRows(mapped);
+    setResults([]);
+    setProgress(0);
+  };
+
   const runRobot = useCallback(async () => {
     if (!rows.length) return;
     setRunning(true);
@@ -224,12 +283,26 @@ export default function Home() {
     setResults([]);
     const out = [];
 
+    // Gera token antes de começar
+    let tkn = await getTokenValido();
+    if (!tkn) {
+      alert("Não foi possível gerar o token. Verifique usuário e senha.");
+      setRunning(false);
+      return;
+    }
+
     for (let i = 0; i < rows.length; i++) {
       if (abortRef.current) break;
       const row = rows[i];
       setProgress(Math.round(((i + 1) / rows.length) * 100));
 
-      const result = await fetchTracking(row.cnpj, row.nf, token);
+      // Renova token a cada 50 requisições
+      if (i > 0 && i % 50 === 0) {
+        const novo = await gerarToken();
+        if (novo) tkn = novo;
+      }
+
+      const result = await fetchTracking(row.cnpj, row.nf, tkn);
       const parsed = result.ok ? parseResponse(result.data) : null;
 
       out.push({
@@ -249,7 +322,7 @@ export default function Home() {
       await new Promise((r) => setTimeout(r, 400));
     }
     setRunning(false);
-  }, [rows, token]);
+  }, [rows, username, password, token, tokenExpiry]);
 
   const exportCSV = () => {
     const header = ["CNPJ", "NF", "Último Status", "Últ. Atualização", "Previsão Entrega", "Data Entrega Real", "Remetente", "Destinatário", "Prazo (dias úteis)", "Emissão", "Entregue", "Atrasado"];
@@ -354,52 +427,157 @@ export default function Home() {
 
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px" }}>
 
-          {/* Token */}
+          {/* Credenciais */}
           <div style={s.card}>
-            <div style={s.label}>TOKEN DE AUTENTICAÇÃO</div>
-            <input
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="Bearer eyJ... (solicite à Rodonaves pelo SAC: 0800 722 6060)"
-              style={s.input}
-            />
-            <div style={{ fontSize: 11, color: "#4a6a8a", marginTop: 6 }}>
-              Solicite as credenciais da API pelo SAC ou portal do cliente da Rodonaves.
-            </div>
-          </div>
-
-          {/* Upload */}
-          <div
-            onDrop={handleDrop}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onClick={() => fileRef.current.click()}
-            style={{
-              border: `2px dashed ${dragOver ? "#f5a623" : "#1e3a5f"}`,
-              borderRadius: 12, padding: "36px 24px", textAlign: "center",
-              cursor: "pointer", marginBottom: 20, transition: "all 0.2s",
-              background: dragOver ? "rgba(245,166,35,0.05)" : "#060d1a",
-            }}
-          >
-            <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }}
-              onChange={(e) => handleFile(e.target.files[0])} />
-            <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
-            <div style={{ fontSize: 14, color: "#8aa8c8" }}>
-              Arraste o CSV ou <span style={{ color: "#f5a623" }}>clique para selecionar</span>
-            </div>
-            <div style={{ fontSize: 12, color: "#4a6a8a", marginTop: 6 }}>
-              Colunas: <code style={{ color: "#f5a623" }}>CNPJ</code> e <code style={{ color: "#f5a623" }}>NF</code>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
-            <button onClick={downloadSample} style={s.btnOutline("#6b8cad")}>⬇ CSV Modelo</button>
-            {rows.length > 0 && (
-              <div style={{ fontSize: 12, color: "#8aa8c8" }}>
-                <span style={{ color: "#00c48c" }}>✓</span> {rows.length} registro(s) — {results.length} processado(s)
+            <div style={s.label}>CREDENCIAIS RODONAVES — TOKEN AUTOMÁTICO</div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontSize: 11, color: "#6b8cad", marginBottom: 4 }}>USUÁRIO</div>
+                <input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Usuário Rodonaves"
+                  style={s.input}
+                  autoComplete="username"
+                />
               </div>
-            )}
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontSize: 11, color: "#6b8cad", marginBottom: 4 }}>SENHA</div>
+                <input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Senha"
+                  type="password"
+                  style={s.input}
+                  autoComplete="current-password"
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-end" }}>
+                <button
+                  onClick={gerarToken}
+                  disabled={!username || !password || tokenStatus === "loading"}
+                  style={{
+                    background: tokenStatus === "ok" ? "#00c48c22" : "transparent",
+                    border: `1px solid ${tokenStatus === "ok" ? "#00c48c" : tokenStatus === "error" ? "#e74c3c" : "#1e3a5f"}`,
+                    borderRadius: 6, color: tokenStatus === "ok" ? "#00c48c" : tokenStatus === "error" ? "#e74c3c" : "#8aa8c8",
+                    fontSize: 12, padding: "8px 16px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                  }}
+                >
+                  {tokenStatus === "loading" ? "⏳ Gerando..." : tokenStatus === "ok" ? "✓ Token OK" : tokenStatus === "error" ? "✗ Erro" : "🔑 Testar"}
+                </button>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "#4a6a8a", marginTop: 8 }}>
+              O token é gerado e renovado automaticamente. Suas credenciais ficam só neste navegador.
+            </div>
           </div>
+
+          {/* Abas CSV / Texto */}
+          <div style={{ display: "flex", gap: 0, marginBottom: 0 }}>
+            {[["csv", "📂 Importar CSV"], ["texto", "📋 Colar Texto"]].map(([mode, label]) => (
+              <button key={mode} onClick={() => { setInputMode(mode); setRows([]); setResults([]); }}
+                style={{
+                  flex: 1, padding: "10px 0", fontFamily: "inherit", fontSize: 12,
+                  fontWeight: 700, letterSpacing: "0.08em", cursor: "pointer",
+                  border: "1px solid #1e3a5f",
+                  borderBottom: inputMode === mode ? "none" : "1px solid #1e3a5f",
+                  borderRadius: inputMode === mode ? "8px 8px 0 0" : "8px 8px 0 0",
+                  background: inputMode === mode ? "#0d1b2a" : "#060d1a",
+                  color: inputMode === mode ? "#f5a623" : "#6b8cad",
+                  zIndex: inputMode === mode ? 1 : 0,
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Painel CSV */}
+          {inputMode === "csv" && (
+            <div style={{
+              border: "1px solid #1e3a5f", borderTop: "none",
+              borderRadius: "0 0 12px 12px", marginBottom: 20, background: "#0d1b2a",
+            }}>
+              <div
+                onDrop={handleDrop}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onClick={() => fileRef.current.click()}
+                style={{
+                  border: `2px dashed ${dragOver ? "#f5a623" : "#1e3a5f"}`,
+                  borderRadius: 8, margin: 16, padding: "32px 24px", textAlign: "center",
+                  cursor: "pointer", transition: "all 0.2s",
+                  background: dragOver ? "rgba(245,166,35,0.05)" : "#060d1a",
+                }}
+              >
+                <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }}
+                  onChange={(e) => handleFile(e.target.files[0])} />
+                <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
+                <div style={{ fontSize: 14, color: "#8aa8c8" }}>
+                  Arraste o CSV ou <span style={{ color: "#f5a623" }}>clique para selecionar</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#4a6a8a", marginTop: 6 }}>
+                  Colunas: <code style={{ color: "#f5a623" }}>CNPJ</code> e <code style={{ color: "#f5a623" }}>NF</code> — separadas por ; ou ,
+                </div>
+              </div>
+              <div style={{ padding: "0 16px 16px", display: "flex", gap: 12, alignItems: "center" }}>
+                <button onClick={downloadSample} style={s.btnOutline("#6b8cad")}>⬇ CSV Modelo</button>
+                {rows.length > 0 && (
+                  <div style={{ fontSize: 12, color: "#8aa8c8" }}>
+                    <span style={{ color: "#00c48c" }}>✓</span> {rows.length} registro(s) carregado(s)
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Painel Colar Texto */}
+          {inputMode === "texto" && (
+            <div style={{
+              border: "1px solid #1e3a5f", borderTop: "none",
+              borderRadius: "0 0 12px 12px", marginBottom: 20, background: "#0d1b2a", padding: 16,
+            }}>
+              <div style={{ fontSize: 11, color: "#6b8cad", marginBottom: 8 }}>
+                Cole um por linha no formato <code style={{ color: "#f5a623" }}>CNPJ;NF</code> — aceita também vírgula ou tabulação como separador
+              </div>
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder={"23209013001223;118376
+23209013001223;117687
+23209013001223;118232"}
+                style={{
+                  width: "100%", height: 180, background: "#060d1a",
+                  border: "1px solid #1e3a5f", borderRadius: 6,
+                  color: "#e8e8f0", fontSize: 13, padding: "10px 12px",
+                  outline: "none", fontFamily: "monospace", resize: "vertical",
+                  boxSizing: "border-box",
+                }}
+              />
+              <div style={{ display: "flex", gap: 12, marginTop: 10, alignItems: "center" }}>
+                <button
+                  onClick={parsePasteText}
+                  disabled={!pasteText.trim()}
+                  style={{
+                    ...(pasteText.trim() ? s.btnPrimary : s.btnDisabled),
+                    padding: "9px 20px", fontSize: 13,
+                  }}
+                >
+                  ✓ Carregar Dados
+                </button>
+                <button
+                  onClick={() => { setPasteText(""); setRows([]); setResults([]); }}
+                  style={{ ...s.btnOutline("#6b8cad"), padding: "9px 16px", fontSize: 13 }}
+                >
+                  🗑 Limpar
+                </button>
+                {rows.length > 0 && (
+                  <div style={{ fontSize: 12, color: "#00c48c" }}>
+                    ✓ {rows.length} registro(s) carregado(s)
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Preview */}
           {rows.length > 0 && results.length === 0 && (
