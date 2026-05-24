@@ -100,17 +100,21 @@ function parseResponse(data) {
     : "—";
 
   const delivered =
+    description.toLowerCase().includes("entrega finalizada") ||
     description.toLowerCase().includes("entregue") ||
     description.toLowerCase().includes("delivered");
 
   // Data real de entrega — busca nos eventos
-  const eventoEntrega = events.find((ev) =>
-    (ev.Description || "").toLowerCase().includes("entregue") ||
-    (ev.Description || "").toLowerCase().includes("delivered")
-  );
+  const isEntregue = (desc) => {
+    const d = (desc || "").toLowerCase();
+    return d.includes("entrega finalizada") || d.includes("entregue") || d.includes("delivered");
+  };
+  const eventoEntrega = events.slice().reverse().find((ev) => isEntregue(ev.Description));
   const dataEntregaReal = eventoEntrega?.Date
     ? new Date(eventoEntrega.Date).toLocaleString("pt-BR")
     : null;
+  // Also update delivered flag based on finalizada
+  const deliveredFinal = events.some((ev) => isEntregue(ev.Description));
 
   // Previsão de entrega = EmissionDate + ExpectedDeliveryDays (dias úteis)
   const emissionRaw = item.EmissionDate ? new Date(item.EmissionDate) : null;
@@ -324,10 +328,11 @@ export default function Home() {
   }, [rows, username, password, token, tokenExpiry]);
 
   const exportCSV = () => {
-    const header = ["CNPJ", "NF", "Último Status", "Últ. Atualização", "Previsão Entrega", "Data Entrega Real", "Remetente", "Destinatário", "Prazo (dias úteis)", "Emissão", "Entregue", "Atrasado"];
+    const header = ["CNPJ", "NF", "NF + 1", "Último Status", "Últ. Atualização", "Previsão Entrega", "Data Entrega Real", "Remetente", "Destinatário", "Prazo (dias úteis)", "Emissão", "Entregue", "Atrasado"];
     const lines = results.map((r) => [
       r.cnpj,
       r.nf,
+      `1 ${r.nf}`,
       `"${(r.lastEvent || "").replace(/"/g, "'")}"`,
       r.lastDate,
       r.previsaoEntrega || "—",
@@ -675,6 +680,7 @@ export default function Home() {
                           <td style={{ ...s.td, color: "#4a6a8a" }}>{r.id + 1}</td>
                           <td style={{ ...s.td, color: "#8aa8c8", fontFamily: "monospace" }}>{r.cnpj}</td>
                           <td style={{ ...s.td, color: "#8aa8c8", fontFamily: "monospace" }}>{r.nf}</td>
+                          <td style={{ ...s.td, color: "#6b8cad", fontFamily: "monospace", whiteSpace: "nowrap" }}>1 {r.nf}</td>
                           <td style={{ ...s.td, maxWidth: 260 }}>
                             <span style={{
                               display: "inline-block",
@@ -729,7 +735,7 @@ export default function Home() {
                         {/* Detalhes expandidos */}
                         {expanded === r.id && r.parsed?.allEvents && (
                           <tr key={`detail-${r.id}`} style={{ borderBottom: "1px solid #111e30" }}>
-                            <td colSpan={10} style={{ padding: "0 14px 16px 14px", background: "#060d1a" }}>
+                            <td colSpan={11} style={{ padding: "0 14px 16px 14px", background: "#060d1a" }}>
                               <div style={{ padding: "12px 0 8px", fontSize: 11, color: "#f5a623", letterSpacing: "0.1em" }}>
                                 HISTÓRICO COMPLETO — NF {r.nf}
                               </div>
