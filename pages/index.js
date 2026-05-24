@@ -255,12 +255,11 @@ export default function Home() {
   };
 
   const parsePasteText = () => {
-    const linhas = pasteText.trim().split(/
-/);
+    const linhas = pasteText.trim().split(String.fromCharCode(10));
     const mapped = [];
     let id = 0;
     for (const linha of linhas) {
-      const partes = linha.trim().split(/[;,	]+/);
+      const partes = linha.trim().split(/[;,]+/).map(s => s.trim());
       if (partes.length < 2) continue;
       const cnpj = partes[0].trim();
       const nf = partes[1].trim();
