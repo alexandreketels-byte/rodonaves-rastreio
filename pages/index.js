@@ -181,14 +181,8 @@ export default function Home() {
   const [results, setResults] = useState([]);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [username, setUsername] = useState(() => {
-    if (typeof window !== "undefined") return localStorage.getItem("rodo_user") || "";
-    return "";
-  });
-  const [password, setPassword] = useState(() => {
-    if (typeof window !== "undefined") return localStorage.getItem("rodo_pass") || "";
-    return "";
-  });
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [tokenExpiry, setTokenExpiry] = useState(null);
   const [tokenStatus, setTokenStatus] = useState(""); // "ok" | "error" | "loading"
@@ -414,7 +408,7 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Rodonaves Rastreio Bot</title>
+        <title>Rodonaves Rastreio - Dis Comércio</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
       </Head>
@@ -429,7 +423,7 @@ export default function Home() {
           }}>🚛</div>
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "0.05em", color: "#fff" }}>
-              RODONAVES <span style={{ color: "#f5a623" }}>RASTREIO</span> BOT
+              RODONAVES <span style={{ color: "#f5a623" }}>RASTREIO</span> DIS COMÉRCIO 
             </div>
             <div style={{ fontSize: 11, color: "#6b8cad", letterSpacing: "0.12em" }}>IMPORTAÇÃO EM LOTE VIA CSV</div>
           </div>
@@ -445,7 +439,7 @@ export default function Home() {
                 <div style={{ fontSize: 11, color: "#6b8cad", marginBottom: 4 }}>USUÁRIO</div>
                 <input
                   value={username}
-                  onChange={(e) => { setUsername(e.target.value); if (typeof window !== "undefined") localStorage.setItem("rodo_user", e.target.value); }}
+                  onChange={(e) => setUsername(e.target.value)}
                   placeholder="Usuário Rodonaves"
                   style={s.input}
                   autoComplete="username"
@@ -455,7 +449,7 @@ export default function Home() {
                 <div style={{ fontSize: 11, color: "#6b8cad", marginBottom: 4 }}>SENHA</div>
                 <input
                   value={password}
-                  onChange={(e) => { setPassword(e.target.value); if (typeof window !== "undefined") localStorage.setItem("rodo_pass", e.target.value); }}
+                  onChange={(e) => setPassword(e.target.value)}
                   placeholder="Senha"
                   type="password"
                   style={s.input}
