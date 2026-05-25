@@ -408,7 +408,7 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Rodonaves Rastreio Bot</title>
+        <title>Rodonaves Rastreio - Dis Comércio</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
       </Head>
@@ -423,7 +423,7 @@ export default function Home() {
           }}>🚛</div>
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "0.05em", color: "#fff" }}>
-              RODONAVES <span style={{ color: "#f5a623" }}>RASTREIO</span> BOT
+              RODONAVES <span style={{ color: "#f5a623" }}>RASTREIO</span> Dis Comércio 
             </div>
             <div style={{ fontSize: 11, color: "#6b8cad", letterSpacing: "0.12em" }}>IMPORTAÇÃO EM LOTE VIA CSV</div>
           </div>
