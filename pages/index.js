@@ -408,7 +408,7 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Rodonaves Rastreio Bot</title>
+        <title>Rodonaves Rastreio - Dis Comércio</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
       </Head>
