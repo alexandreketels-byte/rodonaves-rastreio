@@ -423,7 +423,7 @@ export default function Home() {
           }}>🚛</div>
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "0.05em", color: "#fff" }}>
-              RODONAVES <span style={{ color: "#f5a623" }}>RASTREIO</span> Dis Comércio 
+              RODONAVES <span style={{ color: "#f5a623" }}>RASTREIO</span> DIS COMÉRCIO 
             </div>
             <div style={{ fontSize: 11, color: "#6b8cad", letterSpacing: "0.12em" }}>IMPORTAÇÃO EM LOTE VIA CSV</div>
           </div>
