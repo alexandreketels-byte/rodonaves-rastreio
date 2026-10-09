@@ -12,14 +12,17 @@ function feriadosDoAno(ano) {
   const lista = FERIADOS_FIXOS.map(f => `${ano}-${f}`);
   const p = calcPascoa(ano);
   const add = (d,n) => { const r=new Date(d); r.setDate(r.getDate()+n); return r; };
-  const fmt = d => d.toISOString().slice(0,10);
+  // Usa ano/mês/dia local para evitar conversão UTC→BRT que troca a data
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   lista.push(fmt(add(p,-48)),fmt(add(p,-47)),fmt(add(p,-2)),fmt(p),fmt(add(p,60)));
   return lista;
 }
 function isUtil(date) {
   const dow = date.getDay();
   if (dow===0||dow===6) return false;
-  return !feriadosDoAno(date.getFullYear()).includes(date.toISOString().slice(0,10));
+  // Usa data local (não UTC) para comparar com a lista de feriados
+  const key = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+  return !feriadosDoAno(date.getFullYear()).includes(key);
 }
 function addDiasUteis(dataInicio, dias) {
   if (!dataInicio||!dias||dias==="—") return null;
