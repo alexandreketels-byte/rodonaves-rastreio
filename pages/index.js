@@ -189,6 +189,15 @@ export default function Home() {
     setRows(mapped); setResults([]); setProgress(0);
   };
 
+  const fetchTrackingAmbos = async (nf, tkn) => {
+    const [r0, r1] = await Promise.all(cnpjs.map(c => fetchTracking(c, nf, tkn)));
+    if (r0.ok && r0.data && r0.data.length > 0) return { ...r0, usedCnpj: cnpjs[0] };
+    if (r1.ok && r1.data && r1.data.length > 0) return { ...r1, usedCnpj: cnpjs[1] };
+    if (r0.ok) return { ...r0, usedCnpj: cnpjs[0] };
+    if (r1.ok) return { ...r1, usedCnpj: cnpjs[1] };
+    return { ...r0, usedCnpj: cnpjs[0] };
+  };
+
   const runRobot = useCallback(async()=>{
     if(!rows.length) return;
     setRunning(true); abortRef.current=false; setResults([]);
@@ -200,9 +209,11 @@ export default function Home() {
       const row=rows[i];
       setProgress(Math.round(((i+1)/rows.length)*100));
       if(i>0&&i%50===0){const novo=await gerarToken();if(novo)tkn=novo;}
-      const result=await fetchTracking(row.cnpj,row.nf,tkn);
+      const isAmbos = row.cnpj === "AMBOS";
+      const result = isAmbos ? await fetchTrackingAmbos(row.nf, tkn) : await fetchTracking(row.cnpj, row.nf, tkn);
+      const effectiveCnpj = isAmbos ? (result.usedCnpj || cnpjs[0]) : row.cnpj;
       const parsed=result.ok?parseResponse(result.data):null;
-      out.push({...row,ok:result.ok,lastEvent:result.ok?parsed.lastEvent:result.error,lastDate:result.ok?parsed.lastDate:"—",delivered:result.ok?parsed.delivered:false,atrasado:result.ok?parsed.atrasado:false,previsaoEntrega:result.ok?parsed.previsaoEntrega:"—",dataEntregaReal:result.ok?parsed.dataEntregaReal:null,parsed,rawData:result.data,httpStatus:result.status});
+      out.push({...row,cnpj:effectiveCnpj,ok:result.ok,lastEvent:result.ok?parsed.lastEvent:result.error,lastDate:result.ok?parsed.lastDate:"—",delivered:result.ok?parsed.delivered:false,atrasado:result.ok?parsed.atrasado:false,previsaoEntrega:result.ok?parsed.previsaoEntrega:"—",dataEntregaReal:result.ok?parsed.dataEntregaReal:null,parsed,rawData:result.data,httpStatus:result.status});
       setResults([...out]);
       await new Promise(r=>setTimeout(r,400));
     }
@@ -335,6 +346,7 @@ export default function Home() {
                   <div style={{ fontSize:11,color:"#6b8cad",marginBottom:6 }}>CNPJ</div>
                   <select value={selectedCnpj} onChange={e=>setSelectedCnpj(e.target.value)} style={{...s.input,cursor:"pointer"}}>
                     <option value="">— Selecione o CNPJ —</option>
+                    <option value="AMBOS">🔀 Ambos os CNPJs</option>
                     {cnpjs.map((c,i)=><option key={i} value={c}>{fmtCNPJ(c)}</option>)}
                   </select>
                 </div>
